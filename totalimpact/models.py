@@ -147,6 +147,15 @@ class CollectionFactory():
 
         return collection
 
+    @classmethod
+    def get(cls, dao, cid):
+        res = dao.db.view("queues/collections-with-items", include_docs=True)
+        coll = dict([row.doc for row in res[[cid, 0]]][0])
+        coll["items"]= []
+        for row in res[[cid, 1]]:
+            coll["items"].append(row["doc"])
+
+        return coll
 
 
 

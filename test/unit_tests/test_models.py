@@ -246,9 +246,28 @@ class TestMemberItems():
 
 class TestCollectionFactory():
 
+    def setUp(self):
+        # hacky way to delete the "ti" db, then make it fresh again for each test.
+        temp_dao = dao.Dao("http://localhost:5984", os.getenv("CLOUDANT_DB"))
+        temp_dao.delete_db(os.getenv("CLOUDANT_DB"))
+        self.d = dao.Dao("http://localhost:5984", os.getenv("CLOUDANT_DB"))
+
+
+        item1 = {"_id": "1", "type": "item", "aliases": {"doi":["111"]}}
+        item2 = {"_id": "2", "type": "item", "aliases": {"doi":["222"]}}
+        item3 = {"_id": "3", "type": "item", "aliases": {"doi":["333"]}}
+        coll1 = {"_id": "c1", "type": "collection", "item_tiids":["1", "2"]}
+        docs = [item1, item2, item3, coll1]
+        for doc in docs:
+            self.d.save(doc)
+
     def test_make_creates_identifier(self):
         coll = models.CollectionFactory.make()
         assert_equals(len(coll["_id"]), 6)
 
-class TestBiblio(unittest.TestCase):
-    pass
+    def test_get_gets_json(self):
+        res = models.CollectionFactory.get(self.d, "c1")
+        print res["items"]
+        assert_equals(len(res["items"]), 2)
+
+
