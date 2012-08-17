@@ -7,6 +7,7 @@
       span.time{width: 106px; color: #555; display:inline-block; text-align: right; margin-right: 5px; font-weight: bold}
       span.seconds{font-weight:normal; font-size:.5em;}
       span.collection-name{color:#555; font-size:.7em;}
+      span.ip {font-size:.5; color:#555; }
       span.num-items {font-size:.5em; min-width: 80px; display: inline-block; color: #555; text-align: right; margin-right: 5px;}
       span.num-items a {font-size: 2em; font-weight: bold; text-decoration: none;}
       body{margin:0; padding:0; line-height: 1.4; font-family:arial, sans-serif}
@@ -25,7 +26,7 @@
       <span class="num-items"><a href="{{ row.url }}">{{ row.value[1] }}</a></span>
       <span class="time">{{ row.key[1][11:16] }}<span class="seconds">:{{ row.key[1][17:19] }}</span></span>
       <span class="collection-name">{{ row.value[0] }}</span>
-      <span class="ip">{{ row.value[2] }}</span>
+      <span class="ip">({{ row.value[2] }})</span>
    </li>
    {% endfor %}
 </ul>

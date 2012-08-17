@@ -148,7 +148,10 @@ class CollectionFactory():
         return collection
 
     @classmethod
-    def get(cls, dao, cid):
+    def _get(cls, dao, cid):
+        """
+        Gets a collection dict from the db; formatting done by other methods
+        """
         res = dao.db.view("queues/collections-with-items", include_docs=True)
         coll = dict([row.doc for row in res[[cid, 0]]][0])
         coll["items"]= []
@@ -157,6 +160,51 @@ class CollectionFactory():
 
         return coll
 
+    @classmethod
+    def get_json(cls, dao, cid):
+        return cls._get(dao, cid)
+
+    @classmethod
+    def get_csv(cls, dao, cid):
+        coll = cls._get(dao, cid)
+
+        # create the header row
+        header_metric_names = []
+        for item in coll["items"]:
+            header_metric_names += item["metrics"].keys()
+
+            # get unique
+            header_alias_names = ["title", "doi"]
+            header_metric_names = sorted(list(set(header_metric_names)))
+
+            csv_list = ["tiid," + ','.join(header_alias_names + header_metric_names)]
+
+        # body rows
+        for item in coll["items"]:
+            column_list = [item["_id"]]
+            for alias_name in header_alias_names:
+                try:
+                    value_to_store = item['aliases'][alias_name][0]
+                    if (" " in value_to_store) or ("," in value_to_store):
+                        value_to_store = '"' + value_to_store + '"'
+                    column_list += [value_to_store]
+                except (IndexError, KeyError):
+                    column_list += [""]
+            for metric_name in header_metric_names:
+                try:
+                    values = item['metrics'][metric_name]['values']
+                    latest_key = sorted(values, reverse=True)[0]
+                    value_to_store = str(values[latest_key])
+                    if (" " in value_to_store) or ("," in value_to_store):
+                        value_to_store = '"' + value_to_store + '"'
+                    column_list += [value_to_store]
+                except (IndexError, KeyError):
+                    column_list += [""]
+            csv_list.append(",".join(column_list))
+
+        # join together in a string
+        csv = "\n".join(csv_list)
+        return csv
 
 
 class MemberItems():

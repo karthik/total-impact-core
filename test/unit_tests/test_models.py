@@ -253,11 +253,12 @@ class TestCollectionFactory():
         self.d = dao.Dao("http://localhost:5984", os.getenv("CLOUDANT_DB"))
 
 
-        item1 = {"_id": "1", "type": "item", "aliases": {"doi":["111"]}}
-        item2 = {"_id": "2", "type": "item", "aliases": {"doi":["222"]}}
-        item3 = {"_id": "3", "type": "item", "aliases": {"doi":["333"]}}
-        coll1 = {"_id": "c1", "type": "collection", "item_tiids":["1", "2"]}
-        docs = [item1, item2, item3, coll1]
+        item1 = {"_id": "1", "type": "item", "aliases": {"title": ["title 1"], "doi":["d1"]}, "metrics": {"pdf_views": {"values":{"2012-06-08T19:29:35.025842": 10}}}}
+        item2 = {"_id": "2", "type": "item", "aliases": {"title": ["title 2"], "doi":["d2"]}, "metrics": {"html_views": {"values":{"2022-06-08T29:29:35.025842": 20}}}}
+        item3 = {"_id": "3", "type": "item", "aliases": {"title": ["title 3"], "doi":["d3"]}, "metrics": {"html_views": {"values":{"2032-06-08T39:29:35.025842": 30}}}}
+        item4 = {"_id": "4", "type": "item", "aliases": {"title": ["title 4"], "doi":["d4"]}}
+        coll1 = {"_id": "c1", "type": "collection", "item_tiids":["1", "2", "3"]}
+        docs = [item1, item2, item3, item4, coll1]
         for doc in docs:
             self.d.save(doc)
 
@@ -265,9 +266,16 @@ class TestCollectionFactory():
         coll = models.CollectionFactory.make()
         assert_equals(len(coll["_id"]), 6)
 
-    def test_get_gets_json(self):
-        res = models.CollectionFactory.get(self.d, "c1")
+    def test_get_json(self):
+        res = models.CollectionFactory.get_json(self.d, "c1")
         print res["items"]
-        assert_equals(len(res["items"]), 2)
+        assert_equals(len(res["items"]), 3)
+
+    def test_get_csv(self):
+        res = models.CollectionFactory.get_csv(self.d, "c1")
+        print res
+        rows = res.splitlines()
+        assert_equals(len(rows), 4) #header plus three items
+        assert_equals(rows[1].split(",")[1], '"title 1"') # title (in quotes) in 2nd column
 
 
