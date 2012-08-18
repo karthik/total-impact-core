@@ -252,6 +252,9 @@ class TestCollectionFactory():
         temp_dao.delete_db(os.getenv("CLOUDANT_DB"))
         self.d = dao.Dao("http://localhost:5984", os.getenv("CLOUDANT_DB"))
 
+        # setup a clean new redis instance
+        self.r = tiredis.from_url("redis://localhost:6379")
+        self.r.flushdb()
 
         item1 = {"_id": "1", "type": "item", "aliases": {"title": ["title 1"], "doi":["d1"]}, "metrics": {"pdf_views": {"values":{"2012-06-08T19:29:35.025842": 10}}}}
         item2 = {"_id": "2", "type": "item", "aliases": {"title": ["title 2"], "doi":["d2"]}, "metrics": {"html_views": {"values":{"2022-06-08T29:29:35.025842": 20}}}}
@@ -267,15 +270,20 @@ class TestCollectionFactory():
         assert_equals(len(coll["_id"]), 6)
 
     def test_get_json(self):
-        res = models.CollectionFactory.get_json(self.d, "c1")
+        res_json, still_updating = models.CollectionFactory.get_json(self.d, self.r, "c1")
+        res = json.loads(res_json)
         print res["items"]
         assert_equals(len(res["items"]), 3)
+        assert_equals(res["items"][0]["currently_updating"], 0)
 
     def test_get_csv(self):
-        res = models.CollectionFactory.get_csv(self.d, "c1")
-        print res
-        rows = res.splitlines()
+        csv, still_updating = models.CollectionFactory.get_csv(self.d, self.r, "c1")
+        print csv
+        rows = csv.splitlines()
         assert_equals(len(rows), 4) #header plus three items
         assert_equals(rows[1].split(",")[1], '"title 1"') # title (in quotes) in 2nd column
 
-
+    @raises(KeyError)
+    def test_get_raises_KeyError_if_cid_not_in_db(self):
+        ret, still_updating = models.CollectionFactory.get_json(self.d, self.r, "not_here")
+        assert True

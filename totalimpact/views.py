@@ -11,7 +11,6 @@ import logging
 
 logger = logging.getLogger("ti.views")
 logger.setLevel(logging.DEBUG)
-redis = redis.from_url(os.getenv("REDISTOGO_URL"))
 
 mydao = dao.Dao(os.environ["CLOUDANT_URL"], os.getenv("CLOUDANT_DB"))
 myredis = tiredis.from_url(os.getenv("REDISTOGO_URL"))
@@ -387,83 +386,35 @@ def provider_biblio(provider_name, id):
 
 
 
-
-
-def retrieve_items(tiids):
-    something_currently_updating = False
-    items = []
-    for tiid in tiids:
-        try:
-            item = ItemFactory.get_item(mydao, tiid)
-        except (LookupError, AttributeError), e:
-            logger.warning(
-                "Got an error looking up tiid '{tiid}'; aborting with 404. error: {error}".format(
-                    tiid=tiid,
-                    error=e.__repr__()
-                ))
-            abort(404)
-
-        if not item:
-            logger.warning(
-                "Looks like there's no item with tiid '{tiid}': aborting with 404".format(
-                    tiid=tiid
-                ))
-            abort(404)
-
-        currently_updating = myredis.get_num_providers_left(tiid) > 0
-        item["currently_updating"] = currently_updating
-        something_currently_updating = something_currently_updating or currently_updating
-
-        items.append(item)
-    return (items, something_currently_updating)
-
-
-'''
-GET /collection/:collection_ID
-returns a collection object and the items
-'''
-
 @app.route('/collection/<cid>', methods=['GET'])
 @app.route('/collection/<cid>.<format>', methods=['GET'])
 def collection_get(cid='', format="json"):
-    coll = mydao.get(cid)
-    if not coll:
-        abort(404)
+    '''
+    Gets a collection along with its items.
+    '''
 
-    # if not include items, then just return the collection straight from couch
-    if (request.args.get("include_items") in ["0", "false", "False"]):
-        # except if format is csv.  can't do that.
-        if format == "csv":
-            abort(405)  # method not supported
-        else:
-            response_code = 200
-            resp = make_response(json.dumps(coll, sort_keys=True, indent=4),
-                                 response_code)
-            resp.mimetype = "application/json"
+    logger.info("getting collection "+cid)
+    method = getattr(CollectionFactory, "get_"+format)
+    try:
+        (coll_str, num_items_still_updating) = method(mydao, myredis, cid)
+    except KeyError:
+        abort(404, "Sorry, collection '{cid}' doesn't seem to exist.")
+
+    if num_items_still_updating > 0:
+        response_code = 210
+        logger.debug("collection {cid} is still updating; returning 210".format(cid=cid))
     else:
-        tiids = coll["item_tiids"]
-        (items, something_currently_updating) = retrieve_items(tiids)
+        response_code = 200
+        logger.debug("collection {cid} is done updating; returning 200".format(cid=cid))
+    resp = make_response(coll_str, response_code)
 
-        # return success if all reporting is complete for all items    
-        if something_currently_updating:
-            response_code = 210 # update is not complete yet
-        else:
-            response_code = 200
-
-        if format == "csv":
-            csv = make_csv_rows(items)
-            resp = make_response(csv, response_code)
-            resp.mimetype = "text/csv"
-            resp.headers.add("Content-Disposition",
-                             "attachment; filename=ti.csv")
-        else:
-            coll["items"] = items
-            del coll["item_tiids"]
-            # print json.dumps(coll, sort_keys=True, indent=4)
-            resp = make_response(json.dumps(coll, sort_keys=True, indent=4),
-                                 response_code)
-            resp.mimetype = "application/json"
+    if format == "json":
+        resp.mimetype = "application/json"
+    elif format == "csv":
+        resp.mimetype = "text/csv"
+        resp.headers.add("Content-Disposition", "attachment; filename=ti.csv")
     return resp
+
 
 
 @app.route("/collection/<cid>", methods=["POST"])
@@ -533,7 +484,7 @@ def collection_create():
 def tests_interactions(action_type=''):
     logger.info("getting test/collection/" + action_type)
 
-    report = redis.hgetall("test.collection." + action_type)
+    report = myredis.hgetall("test.collection." + action_type)
     report["url"] = "http://{root}/collection/{collection_id}".format(
         root=os.getenv("WEBAPP_ROOT"),
         collection_id=report["result"]

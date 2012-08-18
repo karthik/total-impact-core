@@ -148,25 +148,37 @@ class CollectionFactory():
         return collection
 
     @classmethod
-    def _get(cls, dao, cid):
+    def _get(cls, dao, myredis, cid):
         """
         Gets a collection dict from the db; formatting done by other methods
         """
+        logger.info("getting collection for cid" + cid)
         res = dao.db.view("queues/collections-with-items", include_docs=True)
-        coll = dict([row.doc for row in res[[cid, 0]]][0])
+        try:
+            coll = dict([row.doc for row in res[[cid, 0]]][0])
+        except IndexError:
+            # key error makes more sense for client code
+            logger.error("Collection '{cid}' not found.".format(cid=cid))
+            raise KeyError("Collection '{cid}' not found.".format(cid=cid))
         coll["items"]= []
+        items_currently_updating = 0
         for row in res[[cid, 1]]:
+            currently_updating = myredis.get_num_providers_left(row["id"]) > 0 # boolean
+            row["doc"]["currently_updating"] = currently_updating
+            items_currently_updating += int(currently_updating)
             coll["items"].append(row["doc"])
 
+        coll["num_items_updating"] = items_currently_updating
         return coll
 
     @classmethod
-    def get_json(cls, dao, cid):
-        return cls._get(dao, cid)
+    def get_json(cls, dao, myredis, cid):
+        coll = cls._get(dao, myredis, cid)
+        return json.dumps(coll, sort_keys=True, indent=4), coll["num_items_updating"]
 
     @classmethod
-    def get_csv(cls, dao, cid):
-        coll = cls._get(dao, cid)
+    def get_csv(cls, dao, myredis, cid):
+        coll = cls._get(dao, myredis, cid)
 
         # create the header row
         header_metric_names = []
@@ -204,7 +216,7 @@ class CollectionFactory():
 
         # join together in a string
         csv = "\n".join(csv_list)
-        return csv
+        return csv, coll["num_items_updating"]
 
 
 class MemberItems():

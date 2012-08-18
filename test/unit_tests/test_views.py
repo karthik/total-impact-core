@@ -191,68 +191,11 @@ class TestCollection(ViewsTester):
         assert_equals(response_loaded["item_tiids"], [u'tiid1', u'tiid2'])
 
     def test_collection_get_with_no_id(self):
-        response = self.client.get('/collection/')
+        response = self.client.get('/collection/notgoingtofindthis')
         assert_equals(response.status_code, 404)  #Not found
 
 
-    def test_collection_get(self):
-        # put some items in the db
-        items = [
-            ["url", "http://google.com"],
-            ["url", "http://nescent.org"],
-            ["url", "http://total-impact.org"]
-        ]
-        resp = self.client.post(
-            '/items',
-            data=json.dumps(items),
-            content_type="application/json"
-        )
-        tiids = json.loads(resp.data)
 
-        response = self.client.post(
-            '/collection',
-            data=json.dumps({"items": tiids, "title":"My Title"}),
-            content_type="application/json")
-        collection = json.loads(response.data)
-        collection_id = collection["_id"]
-
-        resp = self.client.get('/collection/'+collection_id)
-        print resp
-        assert_equals(resp.status_code, 210)
-        collection_data = json.loads(resp.data)
-        assert_equals(set(collection_data.keys()), set([u'title', u'items', u'_rev', u'created', u'last_modified', u'ip_address', u'_id', u'type']))
-
-        items_urls = [item_from_db['aliases']['url'][0] for item_from_db in collection_data["items"]]
-        expected_ids = [i[1] for i in items]
-        assert_equals(set(items_urls), set(expected_ids))
-
-    def test_collection_get_include_items_false(self):
-        # put some items in the db
-        items = [
-            ["url", "http://google.com"],
-            ["url", "http://nescent.org"],
-            ["url", "http://total-impact.org"]
-        ]
-        resp = self.client.post(
-            '/items',
-            data=json.dumps(items),
-            content_type="application/json"
-        )
-        tiids = json.loads(resp.data)
-
-        response = self.client.post(
-            '/collection',
-            data=json.dumps({"items": tiids, "title":"My Title"}),
-            content_type="application/json")
-        collection = json.loads(response.data)
-        collection_id = collection["_id"]
-
-        resp = self.client.get('/collection/'+collection_id+'?include_items=false')
-        print resp
-        assert_equals(resp.status_code, 200)
-        collection_data = json.loads(resp.data)
-        assert_equals(set(collection_data.keys()), set([u'title', u'item_tiids', u'_rev', u'created', u'last_modified', u'ip_address', u'_id', u'type']))
-        assert_equals(collection_data["item_tiids"], tiids)
 
     def test_collection_update_puts_items_on_update_queue(self):
         # put some stuff in the collection:

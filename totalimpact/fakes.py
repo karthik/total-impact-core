@@ -121,7 +121,8 @@ class ReportPage:
             url = api_url + "/collection/" + self.collectionId
             resp = requests.get(url, config={'verbose': None})
             try:
-                items = json.loads(resp.text)["items"]
+                coll = json.loads(resp.text)
+                items = coll["items"]
             except ValueError:
                 logger.warning(
                     "POSTing '{url}' returned no json, only '{resp}') ".format(
@@ -131,10 +132,7 @@ class ReportPage:
 
             tries += 1
 
-            currently_updating_flags = [True for item in items if
-                                        item["currently_updating"]]
-            num_currently_updating = len(currently_updating_flags)
-            num_finished_updating = len(items) - num_currently_updating
+            num_finished_updating = len(items) - coll["num_items_updating"]
 
             logger.info(
                 "{num_done} of {num_total} items done updating after {tries} requests.".format(
