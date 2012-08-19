@@ -77,7 +77,7 @@ class TestBackend():
 class TestMetricWorker(TestBackend):
 
     def test_add_metrics_to_item(self):
-        au = backend.MetricsWorker("fake providerwrapper")
+        au = backend.MetricsWorker("fake providerwrapper", self.d)
         metrics = self.providers[0].metrics([("doi", "10.1")])
         new_item = au.add_metrics_to_item(metrics, self.item_with_aliases)
         print new_item
@@ -106,24 +106,35 @@ class TestMetricWorker(TestBackend):
         sample_metrics = self.providers[0].metrics([("doi", "10.1")])
         backend.ProviderWrapper.process_item_for_provider = lambda self, item: (1, sample_metrics)
 
-        au = backend.MetricsWorker(backend.ProviderWrapper(1,2))
-        au.update(self.item_with_aliases)
+        # metrics will always run where an item already exists
+        self.d.save(self.item_with_aliases)
+        item = self.d.get(self.item_with_aliases["_id"])
+
+        au = backend.MetricsWorker(backend.ProviderWrapper(1,2), self.d)
+        au.update(item)
+
+        updated_item = self.d.get(item["_id"])
 
         # adds values for each metric
         assert_equals(
-            self.item_with_aliases["metrics"]["mock:html"]["values"].values()[0],
+            updated_item["metrics"]["mock:html"]["values"].values()[0],
             2
         )
         assert_equals(
-            self.item_with_aliases["metrics"]["mock:pdf"]["values"].values()[0],
+            updated_item["metrics"]["mock:pdf"]["values"].values()[0],
             1
         )
 
         # decrements the num_providers_still_updating
         assert_equals(
-            self.item_with_aliases["num_providers_still_updating"],
+            updated_item["num_providers_still_updating"],
             0
         )
+
+
+
+
+
 
 class TestAliasWorker(TestBackend):
     pass

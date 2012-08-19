@@ -98,6 +98,9 @@ class TotalImpactBackend(object):
 class ProviderWrapper():
     """
     Utility methods for logging and error-handling of all provider calls.
+
+    These three methods maybe might belong in the base Provider class,
+    since they don't talk to the db or anything.
     """
 
     def __init__(self, provider, method_name):
@@ -122,9 +125,10 @@ class ProviderWrapper():
 
     def process_item_for_provider(self, item):
         """ Run the given method for the given provider on the given item
+
             This will deal with retries and sleep / backoff as per the
             configuration for the given provider. We will return true if
-            the given method passes, or if it is not implemented.
+            the given method passes, or if it is not implemented. I
         """
         if method_name not in ('aliases', 'biblio', 'metrics'):
             raise NotImplementedError("Unknown method %s for provider class" % self.method_name)
@@ -321,8 +325,9 @@ class MetricsWorker():
         It will deal with retries and timeouts as required. Doesn't know anything
         about threads.
     """
-    def __init__(self, provider_wrapper):
+    def __init__(self, provider_wrapper, dao):
         self.provider_wrapper = provider_wrapper
+        self.dao = dao
 
     def update_from_queue(self, q):
         while True:
@@ -331,7 +336,6 @@ class MetricsWorker():
             q.task_done()
 
     def update(self, item):
-
         try:
             (success, metrics) = self.provider_wrapper.process_item_for_provider(item)
             if success:
@@ -343,7 +347,10 @@ class MetricsWorker():
             # update provider counter so api knows when all have finished
             item["num_providers_still_updating"] -= 1
 
-        return item
+        if item["num_providers_still_updating"] < 1:
+            # unlikely to have concurrency problems, since we do this just once per item.
+            # but possible.
+            self.dao.save(item)
 
     def add_metrics_to_item(self, metrics, item):
         now = datetime.datetime.now().isoformat()
