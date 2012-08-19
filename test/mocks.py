@@ -149,7 +149,7 @@ class ProviderMock(Provider):
                         else:
                             raise exc
             self.aliases_processed[item_id] = True
-        return[('doi','test_alias')]
+        return[('doi','10.1')]
 
     def metrics(self, aliases, url=None, cache_enabled=True):
         """ Process metrics for the given aliases
@@ -174,7 +174,10 @@ class ProviderMock(Provider):
                         else:
                             raise exc
                 self.metrics_processed[item_id] = True
-        return {"wikipedia:mentions": (1, "http://drilldownurl.org")}
+        return {
+            "mock:pdf": (1, "http://drilldownurl.org"),
+            "mock:html": (2, "http://drilldownurl.org")
+        }
 
     def biblio(self, aliases, url=None, cache_enabled=True):
         """ Process biblio for the given aliases
@@ -199,6 +202,6 @@ class ProviderMock(Provider):
                         else:
                             raise exc
                 self.biblio_processed[item_id] = True
-        return {"title": "mock article name"}
+        return {"title": "fake item"}
 
         

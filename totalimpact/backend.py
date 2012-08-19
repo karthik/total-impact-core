@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import time, sys, logging, os, traceback
+import time, sys, logging, os, traceback, datetime
 from totalimpact import default_settings, dao, tiredis
 from totalimpact.tiqueue import Queue, QueueMonitor
 from totalimpact.models import ItemFactory
@@ -31,7 +31,8 @@ class TotalImpactBackend(object):
         return relevant_provider_config["workers"]
 
     def run(self):
-        
+
+        # create provider threads
         for provider in self.providers:
             if not provider.provides_metrics:                            
                 continue
@@ -42,9 +43,9 @@ class TotalImpactBackend(object):
 
             logger.info("%20s: spawning, n=%i" % (provider.provider_name, thread_count)) 
             # create and start the metrics threads
-            for idx in range(thread_count):
+            for thread_id in range(thread_count):
                 t = ProviderMetricsThread(self.dao, self.redis, provider)
-                t.thread_id = t.thread_id + '[%i]' % idx
+                t.thread_id = t.thread_id + '[%i]' % thread_id
                 t.start()
                 self.threads.append(t)
         
@@ -63,31 +64,47 @@ class TotalImpactBackend(object):
         t.thread_id = 'monitor_thread'
         self.threads.append(t)
 
-    
+    def other_run(self):
+        # get the first item on the queue - this waits until
+        # there is something to return
+        #logger.debug("%20s: waiting for queue item" % self.thread_id)
+        item = self.queue.dequeue()
+
+        # Check we have an item, if we have been signalled to stop, then
+        # item may be None
+        if item:
+            logger.debug("%20s: got an item!  dequeued %s" % (self.thread_id, item["_id"]))
+            # if we get to here, an item has been popped off the queue and we
+            # now want to calculate its metrics.
+            # Repeatedly process this item until we hit the error limit
+            # or we successfully process it
+            logger.debug("%20s: processing item %s" % (self.thread_id, item["_id"]))
+
+            # process item saves the item back to the db as necessary
+            # also puts alias items on metrics queue when done
+            self.process_item(item)
+
+
+            # Flag for testing. We should finish the run loop as soon
+            # as we've processed a single item.
+        if run_only_once:
+            return
+
+        if not item:
+            time.sleep(0.5)
 
 
 
-class ProviderThread(StoppableThread):
-    """ This is the basis for the threads processing items for a provider
-
-        Subclasses should implement process_item to define how they want
-        to use providers to obtain information about a given item. The
-        method process_item_for_provider defined by this class should then
-        be used to handle those updates. This method will deal with retries
-        and backoff as per the provider configuration.  
-
-        This base class is mostly to avoid code duplication between the 
-        Metric and Alias providers.
+class ProviderWrapper():
+    """
+    Utility methods for logging and error-handling of all provider calls.
     """
 
-
-    def __init__(self, dao, redis, queue):
-        self.dao = dao
-        self.redis = redis
-        StoppableThread.__init__(self)
-        self.thread_id = "BaseProviderThread"
-        self.run_once = False
-        self.queue = queue
+    def __init__(self, provider, method_name):
+        self.provider = provider
+        self.provider_name = provider.__class__.__name__
+        self.method = method_name
+        self.worker_id = self.provider_name + "_worker"
 
     def log_error(self, item, error_msg, tb):
         # This method is called to record any errors which we obtain when
@@ -96,89 +113,21 @@ class ProviderThread(StoppableThread):
         
         e = backendException(error_msg)
         e.id = item["_id"]
-        e.provider = self.thread_id
+        e.provider = self.worker_id
         e.stack_trace = "".join(traceback.format_tb(tb))
         
         logger.debug(str(e.stack_trace))
-        
-
-    def run(self, run_only_once=False):
-
-        while not self.stopped():
-            # get the first item on the queue - this waits until
-            # there is something to return
-            #logger.debug("%20s: waiting for queue item" % self.thread_id)
-            item = self.queue.dequeue()
-            
-            # Check we have an item, if we have been signalled to stop, then
-            # item may be None
-            if item:
-                logger.debug("%20s: got an item!  dequeued %s" % (self.thread_id, item["_id"]))
-                # if we get to here, an item has been popped off the queue and we
-                # now want to calculate its metrics. 
-                # Repeatedly process this item until we hit the error limit
-                # or we successfully process it         
-                logger.debug("%20s: processing item %s" % (self.thread_id, item["_id"]))
-
-                # process item saves the item back to the db as necessary
-                # also puts alias items on metrics queue when done
-                self.process_item(item) 
-
-
-            # Flag for testing. We should finish the run loop as soon
-            # as we've processed a single item.
-            if run_only_once:
-                return
-
-            if not item:
-                time.sleep(0.5)
 
 
 
-    def call_provider_method(self, 
-            provider, 
-            method_name, 
-            aliases, 
-            tiid,
-            cache_enabled=True):
-
-        if not aliases:
-            logger.debug("%20s: skipping %s %s %s for %s, no aliases" 
-                % (self.thread_id, provider, method_name, str(aliases), tiid))
-            return None
-
-        provides_method_name = "provides_" + method_name
-        provides_method_to_call = getattr(provider, provides_method_name)
-        if not provides_method_to_call:
-
-            logger.debug("%20s: skipping %s %s %s for %s, does not provide"
-                % (self.thread_id, provider, method_name, str(aliases), tiid))
-            return None
-
-        method_to_call = getattr(provider, method_name)
-        if not method_to_call:
-            logger.debug("%20s: skipping %s %s %s for %s, no method" 
-                % (self.thread_id, provider, method_name, str(aliases), tiid))
-            return None
-
-        logger.debug("%20s: calling %s %s for %s" % (self.thread_id, provider, method_name, tiid))
-        try:
-            response = method_to_call(aliases)
-            #logger.debug("%20s: response from %s %s %s for %s, %s" 
-            #    % (self.thread_id, provider, method_name, str(aliases), tiid, str(response)))
-        except NotImplementedError:
-            response = None
-        return response
-
-
-    def process_item_for_provider(self, item, provider, method_name):
+    def process_item_for_provider(self, item):
         """ Run the given method for the given provider on the given item
-            This will deal with retries and sleep / backoff as per the 
+            This will deal with retries and sleep / backoff as per the
             configuration for the given provider. We will return true if
             the given method passes, or if it is not implemented.
         """
         if method_name not in ('aliases', 'biblio', 'metrics'):
-            raise NotImplementedError("Unknown method %s for provider class" % method_name)
+            raise NotImplementedError("Unknown method %s for provider class" % self.method_name)
 
         tiid = item["_id"]
         error_counts = 0
@@ -188,7 +137,7 @@ class ProviderThread(StoppableThread):
         max_retries = provider.get_max_retries()
         response = None
 
-        while not error_limit_reached and not success and not self.stopped():
+        while not error_limit_reached and not success:
             response = None
 
             try:
@@ -196,7 +145,7 @@ class ProviderThread(StoppableThread):
 
                 if not cache_enabled:
                     logger.debug("%20s: cache NOT enabled %s %s for %s"
-                        % (self.thread_id, provider, method_name, tiid))
+                    % (self.worker_id, self.provider_name, self.method_name, tiid))
 
                 # convert the dict into a list of (namespace, id) tuples, like:
                 # [(doi, 10.123), (doi, 10.345), (pmid, 1234567)]
@@ -208,10 +157,7 @@ class ProviderThread(StoppableThread):
                         for id in ids:
                             alias_tuples.append((ns, id))
 
-
                 response = self.call_provider_method(
-                    provider, 
-                    method_name, 
                     alias_tuples,
                     item["_id"],
                     cache_enabled=cache_enabled)
@@ -227,35 +173,70 @@ class ProviderThread(StoppableThread):
                 error_limit_reached = True
 
             if error_msg:
-                # If we had any errors, update the error counts and sleep if 
-                # we need to do so, before retrying. 
+                # If we had any errors, update the error counts and sleep if
+                # we need to do so, before retrying.
                 tb = sys.exc_info()[2]
-                self.log_error(item, '%s on %s %s' % (error_msg, provider, method_name), tb)
+                self.log_error(
+                    item,
+                    '%s on %s %s' % (error_msg, self.provider_name, self.method_name),
+                    tb,
+                    self.worker_id)
 
                 error_counts += 1
 
                 if ((error_counts > max_retries) and (max_retries != -1)):
                     logger.error("process_item_for_provider: error limit reached (%i/%i) for %s, aborting %s %s" % (
-                        error_counts, max_retries, item["_id"], provider, method_name))
+                        error_counts, max_retries, item["_id"], self.provider_name, self.method_name))
                     error_limit_reached = True
                 else:
                     duration = provider.get_sleep_time(error_counts)
-                    logger.warning("process_item_for_provider: error, pausing thread for %i %s %s, %s" % (duration, item["_id"], provider, method_name))
-                    self._interruptable_sleep(duration)                
+                    logger.warning("process_item_for_provider: error, pausing thread for %i %s %s, %s" % (duration, item["_id"], self.provider_name, self.method_name))
+                    time.sleep(duration)
 
         if success:
             # response may be None for some methods and inputs
             if response:
-                logger.debug("%20s: success %s %s for %s, got %i results" 
-                    % (self.thread_id, provider, method_name, tiid, len(response)))
+                logger.debug("%20s: success %s %s for %s, got %i results"
+                % (self.worker_id, self.provider, self.method_name, tiid, len(response)))
             else:
-                logger.debug("%20s: success %s %s for %s, got 0 results" 
-                    % (self.thread_id, provider, method_name, tiid))
+                logger.debug("%20s: success %s %s for %s, got 0 results"
+                % (self.worker_id, self.provider, self.method_name, tiid))
 
         return (success, response)
 
+    def call_provider_method(self,
+            aliases,
+            tiid,
+            cache_enabled=True):
 
-class ProvidersAliasThread(ProviderThread):
+        if not aliases:
+            logger.debug("%20s: skipping %s %s %s for %s, no aliases"
+                % (self.worker_id, self.provider_name, self.method_name, str(aliases), tiid))
+            return None
+
+        provides_method_name = "provides_" + method_name
+        provides_method_to_call = getattr(self.provider, provides_method_name)
+        if not provides_method_to_call:
+            logger.debug("%20s: skipping %s %s %s for %s, does not provide"
+                % (self.worker_id, self.provider_name, self.method_name, str(aliases), tiid))
+            return None
+
+        method_to_call = getattr(self.provider, method_name)
+        if not method_to_call:
+            logger.debug("%20s: skipping %s %s %s for %s, no method"
+                % (self.worker_id, self.provider_name, self.method_name, str(aliases), tiid))
+            return None
+
+        logger.debug("%20s: calling %s %s for %s" % (self.worker_id, self.provider_name, self.method_name, tiid))
+        try:
+            response = method_to_call(aliases)
+        except NotImplementedError:
+            response = None
+        return response
+
+
+
+class ProvidersAliasThread():
     
     def __init__(self, dao, redis, providers):
         self.providers = providers
@@ -334,40 +315,49 @@ class ProvidersAliasThread(ProviderThread):
 
     
 
-class ProviderMetricsThread(ProviderThread):
-    """ The provider metrics thread will handle obtaining metrics for all
-        requests for a single provider. It will deal with retries and 
-        timeouts as required.
+class MetricsWorker():
+    """ Get's all of one provider's metrics for a single item
+
+        It will deal with retries and timeouts as required. Doesn't know anything
+        about threads.
     """
-    def __init__(self, dao, redis, provider):
-        self.provider = provider
-        queue = Queue(provider.provider_name)
-        ProviderThread.__init__(self, dao, redis, queue)
-        self.thread_id = self.provider.provider_name + "_thread"
-        self.dao = dao
-        self.redis = redis
+    def __init__(self, provider_wrapper):
+        self.provider_wrapper = provider_wrapper
 
+    def update_from_queue(self, q):
+        while True:
+            item = q.get()
+            item = self.update(item)
+            q.task_done()
 
-
-
-    def process_item(self, item):
-        # used by logging
+    def update(self, item):
 
         try:
-            (success, metrics) = self.process_item_for_provider(item, self.provider, 'metrics')
-
+            (success, metrics) = self.provider_wrapper.process_item_for_provider(item)
             if success:
-                if metrics:
-                    for metric_name in metrics.keys():
-                        if metrics[metric_name]:
-                            snap = ItemFactory.build_snap(item["_id"], metrics[metric_name], metric_name)
-                            self.dao.save(snap)
+                print metrics
+                item = self.add_metrics_to_item(metrics, item)
         except ProviderError:
             pass
         finally:
             # update provider counter so api knows when all have finished
-            provider_name =  self.provider.__class__.__name__
-            self.redis.decr_num_providers_left(item["_id"], provider_name)
+            item["num_providers_still_updating"] -= 1
+
+        return item
+
+    def add_metrics_to_item(self, metrics, item):
+        now = datetime.datetime.now().isoformat()
+        if metrics:
+            for name, metric_tuple in metrics.iteritems():
+                item["metrics"].setdefault(name, {})
+                item["metrics"][name]["drilldown_url"] = metric_tuple[1]
+                item["metrics"][name]["values"] = {}
+                item["metrics"][name]["values"][now] = metric_tuple[0]
+
+        return item
+
+
+
 
 
 def main():
