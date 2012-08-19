@@ -79,10 +79,12 @@ class ItemFactory():
         item["_id"] = shortuuid.uuid()[0:24]
         item["aliases"] = {}
         item["biblio"] = {}
-        item["last_modified"] = now
+        item["metrics"] = {}
         item["created"] = now
         item["type"] = "item"
-        item["providersWithMetricsCount"] = ProviderFactory.num_providers_with_metrics(default_settings.PROVIDERS)
+        item["num_providers_to_update"] = \
+            ProviderFactory.num_providers_with_metrics(default_settings.PROVIDERS)
+        item["num_providers_not_updated"] = item["num_providers_to_update"]
 
         return item
 
@@ -148,7 +150,7 @@ class CollectionFactory():
         return collection
 
     @classmethod
-    def _get(cls, dao, myredis, cid):
+    def get(cls, dao, myredis, cid):
         """
         Gets a collection dict from the db; formatting done by other methods
         """
@@ -173,12 +175,12 @@ class CollectionFactory():
 
     @classmethod
     def get_json(cls, dao, myredis, cid):
-        coll = cls._get(dao, myredis, cid)
+        coll = cls.get(dao, myredis, cid)
         return json.dumps(coll, sort_keys=True, indent=4), coll["num_items_updating"]
 
     @classmethod
     def get_csv(cls, dao, myredis, cid):
-        coll = cls._get(dao, myredis, cid)
+        coll = cls.get(dao, myredis, cid)
 
         # create the header row
         header_metric_names = []

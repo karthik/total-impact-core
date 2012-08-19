@@ -22,13 +22,6 @@ class TotalImpactBackend(object):
         self.dao.update_design_doc()
         self.providers = providers
 
-    def run(self):
-        self._spawn_threads()
-        try:
-            self._monitor()
-        except (KeyboardInterrupt, SystemExit):
-            logger.info("Interrupted ... exiting ...")
-            self._cleanup()
 
     def _get_num_workers_from_config(self, provider_name, provider_config):
         relevant_provider_config = {"workers":1}
@@ -37,7 +30,7 @@ class TotalImpactBackend(object):
                 relevant_provider_config = provider_config_dict
         return relevant_provider_config["workers"]
 
-    def _spawn_threads(self):
+    def run(self):
         
         for provider in self.providers:
             if not provider.provides_metrics:                            
@@ -69,37 +62,7 @@ class TotalImpactBackend(object):
         t.start()
         t.thread_id = 'monitor_thread'
         self.threads.append(t)
-        
-    def _monitor(self):        
-        # Install a signal handler so we'll break out of the main loop
-        # on receipt of relevant signals
-        class ExitSignal(Exception):
-            pass
-     
-        def kill_handler(signum, frame):
-            raise ExitSignal()
 
-        import signal
-        signal.signal(signal.SIGTERM, kill_handler)
-
-        try:
-            while True:
-                # just spin our wheels waiting for interrupts
-                time.sleep(1)
-        except (KeyboardInterrupt, ExitSignal), e:
-            pass
-    
-    def _cleanup(self):
-        
-        for t in self.threads:
-            logger.info("%20s: stopping" % (t.thread_id))
-            t.stop()
-        for t in self.threads:
-            logger.info("%20s: waiting to stop" % (t.thread_id))
-            t.join()
-            logger.info("%20s: stopped" % (t.thread_id))
-
-        self.threads = []
     
 
 
@@ -188,12 +151,7 @@ class ProviderThread(StoppableThread):
         provides_method_to_call = getattr(provider, provides_method_name)
         if not provides_method_to_call:
 
-            if method_name == "metrics":
-                # we're not going to call this method, so decr the counter
-                provider_name =  provider.__class__.__name__
-                self.redis.decr_num_providers_left(tiid, provider_name)
-
-            logger.debug("%20s: skipping %s %s %s for %s, does not provide" 
+            logger.debug("%20s: skipping %s %s %s for %s, does not provide"
                 % (self.thread_id, provider, method_name, str(aliases), tiid))
             return None
 
@@ -223,8 +181,6 @@ class ProviderThread(StoppableThread):
             raise NotImplementedError("Unknown method %s for provider class" % method_name)
 
         tiid = item["_id"]
-        #logger.debug("%20s: processing %s %s for %s" 
-        #    % (self.thread_id, provider, method_name, tiid))
         error_counts = 0
         success = False
         error_limit_reached = False
@@ -372,6 +328,7 @@ class ProvidersAliasThread(ProviderThread):
                 % (self.thread_id, item["_id"],item))
             logger.debug("%20s: added to metrics queues complete for item %s " % (self.thread_id, item["_id"]))
             self.dao.save(item)
+
             self.queue.add_to_metrics_queues(item)
 
 
@@ -397,8 +354,7 @@ class ProviderMetricsThread(ProviderThread):
         # used by logging
 
         try:
-            (success, metrics) = self.process_item_for_provider(item, 
-                self.provider, 'metrics')
+            (success, metrics) = self.process_item_for_provider(item, self.provider, 'metrics')
 
             if success:
                 if metrics:
@@ -422,10 +378,8 @@ def main():
     # Start all of the backend processes
     providers = ProviderFactory.get_providers(default_settings.PROVIDERS)
     backend = TotalImpactBackend(mydao, myredis, providers)
-    backend._spawn_threads()
-    backend._monitor()
-    backend._cleanup()
-        
+    backend.run()
+
     logger.debug("Items on Queues: %s" 
         % (str([queue_name + " : " + str(Queue.queued_items_ids(queue_name)) for queue_name in Queue.queued_items.keys()]),))
 
