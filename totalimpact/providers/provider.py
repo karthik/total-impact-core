@@ -30,6 +30,7 @@ class ProviderFactory(object):
             try:
                 prov = ProviderFactory.get_provider(provider_name)
                 prov.provider_name = provider_name
+                prov.threads_allowed = v["workers"]
                 providers.append(prov)
 
                 if filter_by is not None:
