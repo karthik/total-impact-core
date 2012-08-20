@@ -1,5 +1,5 @@
 import os, unittest, time, logging
-from totalimpact.providers.provider import Provider, ProviderFactory
+from totalimpact.providers.provider import Provider, ProviderTimeout
 from totalimpact import dao, tiredis, backend
 from nose.tools import raises, assert_equals, nottest
 
@@ -54,8 +54,8 @@ class TestBackend():
         self.item_with_aliases = {
             "_id": "1",
             "num_providers_still_updating":1,
-            "aliases":{"doi":["10.1"]},
-            "biblio": {"title": "fake item"},
+            "aliases":{"pmid":["111"]},
+            "biblio": {},
             "metrics": {}
         }
         
@@ -63,23 +63,24 @@ class TestBackend():
     def teardown(self):
         self.d.delete_db(os.environ["CLOUDANT_DB"])
 
-#    def test_init_metric_worker(self):
-#        provider = self.providers[0]
-#        provider.metrics
-#        au = backend.MetricWorker(self.providers[0])
-#        au.update()
-#        assert_equals(
-#            len(self.item_with_aliases["metrics"]["mock:views"]),
-#            1)
-
 
 
 class TestMetricWorker(TestBackend):
 
+    def test_converts_classname_to_provider_method_name(self):
+        mw = backend.MetricsWorker(self.providers[0])
+        assert_equals(mw.provider_name, "ProviderMock")
+        assert_equals(mw.method_name, "metrics")
+        assert_equals(mw.method, self.providers[0].metrics)
+
     def test_add_metrics_to_item(self):
-        au = backend.MetricsWorker("fake providerwrapper", self.d)
+        mw = backend.MetricsWorker(self.providers[0])
+        mw.dao = self.d
+
+        #just using the test provider here to create the test metrics dict...
         metrics = self.providers[0].metrics([("doi", "10.1")])
-        new_item = au.add_metrics_to_item(metrics, self.item_with_aliases)
+
+        new_item = mw.add_metrics_to_item(metrics, self.item_with_aliases)
         print new_item
 
         # adds drilldown urls for each metric
@@ -103,15 +104,14 @@ class TestMetricWorker(TestBackend):
         )
 
     def test_update(self):
-        sample_metrics = self.providers[0].metrics([("doi", "10.1")])
-        backend.ProviderWrapper.process_item_for_provider = lambda self, item: (1, sample_metrics)
 
         # metrics will always run where an item already exists
         self.d.save(self.item_with_aliases)
         item = self.d.get(self.item_with_aliases["_id"])
 
-        au = backend.MetricsWorker(backend.ProviderWrapper(1,2), self.d)
-        au.update(item)
+        mw = backend.MetricsWorker(self.providers[0])
+        mw.dao = self.d
+        mw.update(item)
 
         updated_item = self.d.get(item["_id"])
 
@@ -133,8 +133,52 @@ class TestMetricWorker(TestBackend):
 
 
 
+class TestAliasesWorker(TestBackend):
+
+    def test_update(self):
+        aw = backend.AliasesWorker(self.providers[0])
+        new_item = aw.update(self.item_with_aliases)
+        print new_item
+        assert_equals(
+            new_item["aliases"]["doi"][0],
+            "10.1"
+        )
+
+    def test_update_with_another_doi(self):
+        # put a doi in the item
+        aw = backend.AliasesWorker(self.providers[0])
+        item_with_doi = aw.update(self.item_with_aliases)
+
+        # another provider also gets dois...
+        self.providers[1].aliases_returns = [("doi", "10.2")]
+        aw = backend.AliasesWorker(self.providers[1])
+        item_with_two_dois = aw.update(item_with_doi)
+
+        print item_with_two_dois
+        assert_equals(
+            item_with_two_dois["aliases"]["doi"],
+            ["10.1", "10.2"]
+        )
+
+    def test_update_with_provider_timeout(self):
+        self.providers[0].exception_to_raise = ProviderTimeout
+        aw = backend.AliasesWorker(self.providers[0])
+        new_item = aw.update(self.item_with_aliases)
+        print new_item
+
+        assert_equals(len(new_item["aliases"]), 1) # new alias not added
 
 
 
 class TestAliasWorker(TestBackend):
-    pass
+
+    def test_update(self):
+        bw = backend.BiblioWorker(self.providers[0])
+        new_item = bw.update(self.item_with_aliases)
+        print new_item
+        assert_equals(
+            new_item["biblio"]["title"],
+            "fake item"
+        )
+
+
