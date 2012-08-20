@@ -13,85 +13,41 @@ logger.setLevel(logging.DEBUG)
 class backendException(Exception):
     pass
 
-class TotalImpactBackend(object):
+class Backend(object):
     
-    def __init__(self, dao, redis, providers):
-        self.threads = [] 
-        self.dao = dao
-        self.redis = redis
-        self.dao.update_design_doc()
-        self.providers = providers
+    def __init__(self, alias_workers, biblio_workers, metrics_workers):
+        self.alias_workers = alias_workers
+        self.biblio_workers = biblio_workers
+        self.metrics_workers = metrics_workers
 
-
-    def _get_num_workers_from_config(self, provider_name, provider_config):
-        relevant_provider_config = {"workers":1}
-        for (key, provider_config_dict) in provider_config:
-            if (key==provider_name):
-                relevant_provider_config = provider_config_dict
-        return relevant_provider_config["workers"]
-
-    def run(self):
-
-        # create provider threads
-        for provider in self.providers:
-            if not provider.provides_metrics:                            
-                continue
-
-            thread_count = self._get_num_workers_from_config(
-                provider.provider_name, 
-                default_settings.PROVIDERS)
-
-            logger.info("%20s: spawning, n=%i" % (provider.provider_name, thread_count)) 
-            # create and start the metrics threads
-            for thread_id in range(thread_count):
-                t = ProviderMetricsThread(self.dao, self.redis, provider)
-                t.thread_id = t.thread_id + '[%i]' % thread_id
-                t.start()
-                self.threads.append(t)
         
-        logger.info("%20s: spawning" % ("aliases"))
-        t = ProvidersAliasThread(self.dao, self.redis, self.providers)
-        t.start()
-        self.threads.append(t)
-
-        logger.info("%20s: spawning" % ("monitor_thread"))
-        # Start the queue monitor
-        # This will watch for newly created items appearing in the couchdb
-        # which were requested through the API. It then queues them for the
-        # worker processes to handle
-        t = QueueMonitor(self.dao)
-        t.start()
-        t.thread_id = 'monitor_thread'
-        self.threads.append(t)
-
-    def other_run(self):
-        # get the first item on the queue - this waits until
-        # there is something to return
-        #logger.debug("%20s: waiting for queue item" % self.thread_id)
-        item = self.queue.dequeue()
-
-        # Check we have an item, if we have been signalled to stop, then
-        # item may be None
-        if item:
-            logger.debug("%20s: got an item!  dequeued %s" % (self.thread_id, item["_id"]))
-            # if we get to here, an item has been popped off the queue and we
-            # now want to calculate its metrics.
-            # Repeatedly process this item until we hit the error limit
-            # or we successfully process it
-            logger.debug("%20s: processing item %s" % (self.thread_id, item["_id"]))
-
-            # process item saves the item back to the db as necessary
-            # also puts alias items on metrics queue when done
-            self.process_item(item)
+    def get_fresh_item(self, dao):
+        res = dao.db.view("queues/needs_aliases")
+        try:
+            item = res.rows[0]["value"]
+        except IndexError:
+            item = None
+        return item
 
 
-            # Flag for testing. We should finish the run loop as soon
-            # as we've processed a single item.
-        if run_only_once:
-            return
+    def run(self, run_once=False):
+        while True:
+            item = self.get_fresh_item(self.dao)
+            if item is None:
+                time.sleep(0.5)
+            else:
+                start = time.time()
+                logger.info("item '{tiid}' dequeued; beginning update.".format(tiid=item["_id"]))
+                item = self.alias_workers.update(item)
+                item = self.biblio_workers.update(item)
+                logger.info("item '{tiid}' finished alias, biblio updates in {s} seconds".format(
+                    tiid=item["_id"],
+                    s=round(time.time() - start, 2)
+                ))
+                self.metrics_workers.update(item)
 
-        if not item:
-            time.sleep(0.5)
+            if run_once:
+                break
 
 
 
@@ -115,6 +71,7 @@ class Worker():
             method=self.method_name,
             thread_id=thread_id
         )
+        self.threads_allowed = provider.threads_allowed
 
 
     def get_relevant_provider_method(self, provider):
@@ -305,7 +262,22 @@ class AliasesWorker(Worker):
                 ))
         return item
 
-    
+
+class SerialWorkers():
+    """ Trivial class for running through a list of alias or biblio workers.
+
+    Exists to be in paralell with the MetricsWorkers class
+    """
+    def __init__(self, workers):
+        self.workers = workers
+
+    def update(self, item):
+        for worker in self.workers:
+            item = worker.update(item)
+
+        return item
+
+
 
 class MetricsWorker(Worker):
     """ Gets all of one provider's metrics for a single item
@@ -346,23 +318,41 @@ class MetricsWorker(Worker):
 
         return item
 
+class MetricsWorkers():
+    queues = {}
+    threads = {}
 
+    def __init__(self, workers, dao):
+        self.dao = dao
 
+    def update(self, item):
+        pass
 
+    def make_queues(self):
+        pass
+
+    def spawn_thread(self):
+        pass
+
+def make_workers(method):
+    providers = ProviderFactory.get_providers(default_settings, method)
+    workers = []
+    for p in providers:
+        workers.append(Worker(p))
+        
+    return workers
 
 def main():
     mydao = dao.Dao(os.environ["CLOUDANT_URL"], os.environ["CLOUDANT_DB"])
-    myredis = tiredis.from_url(os.getenv("REDISTOGO_URL"))
+    mydao.update_design_doc()
 
+    aliases_workers = SerialWorkers(make_workers("aliases"))
+    biblio_workers = SerialWorkers(make_workers("biblio"))
 
-    # Start all of the backend processes
-    providers = ProviderFactory.get_providers(default_settings.PROVIDERS)
-    backend = TotalImpactBackend(mydao, myredis, providers)
+    metrics_workers = MetricsWorkers(make_workers("metrics"), mydao)
+    
+    backend = Backend(aliases_workers, biblio_workers, metrics_workers)
     backend.run()
-
-    logger.debug("Items on Queues: %s" 
-        % (str([queue_name + " : " + str(Queue.queued_items_ids(queue_name)) for queue_name in Queue.queued_items.keys()]),))
-
  
 if __name__ == "__main__":
     main()

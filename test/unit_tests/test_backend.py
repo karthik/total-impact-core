@@ -1,9 +1,7 @@
-import os, unittest, time, logging
-from totalimpact.providers.provider import Provider, ProviderTimeout
+import os, datetime
 from totalimpact import dao, tiredis, backend
+from totalimpact.providers.provider import Provider, ProviderTimeout, ProviderFactory
 from nose.tools import raises, assert_equals, nottest
-
-
 from test.mocks import ProviderMock, QueueMock
 
 def slow(f):
@@ -53,6 +51,7 @@ class TestBackend():
         self.providers = [ProviderMock("1"), ProviderMock("2"), ProviderMock("3")]
         self.item_with_aliases = {
             "_id": "1",
+            "type": "item",
             "num_providers_still_updating":1,
             "aliases":{"pmid":["111"]},
             "biblio": {},
@@ -61,6 +60,7 @@ class TestBackend():
         
         
     def teardown(self):
+        pass
         self.d.delete_db(os.environ["CLOUDANT_DB"])
 
 
@@ -170,7 +170,7 @@ class TestAliasesWorker(TestBackend):
 
 
 
-class TestAliasWorker(TestBackend):
+class TestBiblioWorker(TestBackend):
 
     def test_update(self):
         bw = backend.BiblioWorker(self.providers[0])
@@ -181,4 +181,25 @@ class TestAliasWorker(TestBackend):
             "fake item"
         )
 
+class TestBackendClass(TestBackend):
+    def test_get_fresh_item(self):
+        item = self.item_with_aliases
 
+        # put some regular items in couch
+        for i in range(1, 3):
+            item["_id"] = "do-not-update-"+str(i)
+            self.d.save(item)
+
+        # now add an item to update in there
+        item["_id"] = "to-update-4"
+        item["needs_aliases"] = datetime.datetime.now().isoformat()
+        self.d.save(item)
+
+        b = backend.Backend("fake", "fake", "fake")
+        item_from_queue = b.get_fresh_item(self.d)
+        assert_equals(item_from_queue["_id"], "to-update-4") # first in, first out
+        del item_from_queue["needs_aliases"] # remove from queue
+        self.d.save(item_from_queue)
+
+        next_item_from_queue = b.get_fresh_item(self.d)
+        assert_equals(next_item_from_queue, None)

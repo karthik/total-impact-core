@@ -94,7 +94,7 @@ class ProviderMock(Provider):
     """ Mock object to simulate a provider for testing 
 
     """
-
+    threads_allowed = 3
     provides_members = True
     provides_aliases = True
     provides_metrics = True
