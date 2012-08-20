@@ -1,10 +1,7 @@
 #!/usr/bin/env python
 
-import time, sys, logging, os, traceback, datetime
-from totalimpact import default_settings, dao, tiredis
-from totalimpact.tiqueue import Queue, QueueMonitor
-from totalimpact.models import ItemFactory
-from totalimpact.pidsupport import StoppableThread
+import time, sys, logging, os, traceback, datetime, threading, Queue
+from totalimpact import default_settings, dao
 from totalimpact.providers.provider import ProviderError, ProviderFactory
 
 logger = logging.getLogger('ti.backend')
@@ -15,12 +12,13 @@ class backendException(Exception):
 
 class Backend(object):
     
-    def __init__(self, alias_workers, biblio_workers, metrics_workers):
+    def __init__(self, alias_workers, biblio_workers, metrics_workers, dao):
         self.alias_workers = alias_workers
         self.biblio_workers = biblio_workers
         self.metrics_workers = metrics_workers
+        self.dao = dao
 
-        
+
     def get_fresh_item(self, dao):
         res = dao.db.view("queues/needs_aliases")
         try:
@@ -319,26 +317,43 @@ class MetricsWorker(Worker):
         return item
 
 class MetricsWorkers():
-    queues = {}
-    threads = {}
+    queues = []
+    threads = []
 
     def __init__(self, workers, dao):
         self.dao = dao
+        self.workers = workers
+
+    def run(self):
+        for worker in self.workers:
+            q = Queue.Queue()
+            self.queues.append(q)
+
+            for i in range(0, worker.threads_allowed):
+                new_thread = threading.Thread(
+                    target=worker.update_from_queue,
+                    args=(q,)
+                )
+                new_thread.start()
+                self.threads.append(new_thread)
+
 
     def update(self, item):
-        pass
+        for queue in self.queues:
+            queue.put(item)
 
-    def make_queues(self):
-        pass
 
-    def spawn_thread(self):
-        pass
+
+
 
 def make_workers(method):
-    providers = ProviderFactory.get_providers(default_settings, method)
+    providers_that_have_this_method = \
+        ProviderFactory.get_providers(default_settings.PROVIDERS, method)
+    worker_class_name = method.title() + "Worker"
     workers = []
-    for p in providers:
-        workers.append(Worker(p))
+    for provider in providers_that_have_this_method:
+        worker = globals()[worker_class_name](provider)
+        workers.append(worker)
         
     return workers
 
@@ -346,12 +361,15 @@ def main():
     mydao = dao.Dao(os.environ["CLOUDANT_URL"], os.environ["CLOUDANT_DB"])
     mydao.update_design_doc()
 
-    aliases_workers = SerialWorkers(make_workers("aliases"))
-    biblio_workers = SerialWorkers(make_workers("biblio"))
-
     metrics_workers = MetricsWorkers(make_workers("metrics"), mydao)
-    
-    backend = Backend(aliases_workers, biblio_workers, metrics_workers)
+    metrics_workers.run()
+
+    backend = Backend(
+        SerialWorkers(make_workers("aliases")),
+        SerialWorkers(make_workers("biblio")),
+        metrics_workers,
+        mydao
+    )
     backend.run()
  
 if __name__ == "__main__":

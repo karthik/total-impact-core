@@ -181,6 +181,10 @@ class TestBiblioWorker(TestBackend):
             "fake item"
         )
 
+
+class TestMetricsWorkers(TestBackend):
+    pass
+
 class TestBackendClass(TestBackend):
     def test_get_fresh_item(self):
         item = self.item_with_aliases
