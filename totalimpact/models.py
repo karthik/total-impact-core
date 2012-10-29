@@ -69,7 +69,7 @@ class ItemFactory():
 
                 # add normalization values
                 raw = metrics[metric_name]["values"]["raw"]
-                normalized_values = cls.get_normalized_values(item["biblio"]['genre'], year, metric_name, raw, myrefsets)
+                normalized_values = cls.get_normalized_values(genre, host, year, metric_name, raw, myrefsets)
 
                 metrics[metric_name]["values"].update(normalized_values)
 
@@ -215,7 +215,7 @@ class ItemFactory():
         return full_metric_names
 
     @classmethod
-    def get_normalized_values(cls, genre, year, metric_name, value, myrefsets):
+    def get_normalized_values(cls, genre, host, year, metric_name, value, myrefsets):
         # Will be passed None as myrefsets type when loading items in reference collections :)
         if not myrefsets:
             return {}
@@ -231,14 +231,18 @@ class ItemFactory():
 
         response = {}
         for refsetname in myrefsets[genre]:
-            # year is a number
-            try:
-                fencepost_values = myrefsets[genre][refsetname][int(year)][metric_name].keys()
-                myclosest = largest_value_that_is_less_than_or_equal_to(value, fencepost_values)
-                response[refsetname] = myrefsets[genre][refsetname][int(year)][metric_name][myclosest]
-            except KeyError:
-                #logger.info("No good lookup in %s %s %s for %s" %(genre, refsetname, year, metric_name))
-                pass
+            # hack for now to deal with multiple refsets types for datasets
+            # use only the reference set type that matches the host (figshare, dryad, etc)
+            if (genre == "dataset"):
+                if (host == refsetname):
+                    # year is a number
+                    try:
+                        fencepost_values = myrefsets[genre][refsetname][int(year)][metric_name].keys()
+                        myclosest = largest_value_that_is_less_than_or_equal_to(value, fencepost_values)
+                        response[refsetname] = myrefsets[genre][refsetname][int(year)][metric_name][myclosest]
+                    except KeyError:
+                        #logger.info("No good lookup in %s %s %s for %s" %(genre, refsetname, year, metric_name))
+                        pass
                 
         return response
 
