@@ -18,7 +18,7 @@ logger = logging.getLogger("ti.views")
 logger.setLevel(logging.DEBUG)
 
 mydao = dao.Dao(os.environ["CLOUDANT_URL"], os.getenv("CLOUDANT_DB"))
-myredis = tiredis.from_url(os.getenv("REDISTOGO_URL"), db=0) #main app is on DB 0
+myredis = tiredis.from_url(os.getenv("REDISCLOUD_URL"), db=0) #main app is on DB 0
 
 logger.debug("Building reference sets")
 myrefsets = None

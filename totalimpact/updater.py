@@ -191,7 +191,7 @@ def main(action_type, number_to_update=35):
 
     cloudant_db = os.getenv("CLOUDANT_DB")
     cloudant_url = os.getenv("CLOUDANT_URL")
-    redis_url = os.getenv("REDISTOGO_URL")
+    redis_url = os.getenv("REDISCLOUD_URL")
 
     mydao = dao.Dao(cloudant_url, cloudant_db)
     myredis = tiredis.from_url(redis_url)

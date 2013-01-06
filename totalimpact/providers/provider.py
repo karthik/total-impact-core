@@ -107,6 +107,7 @@ class Provider(object):
         self.max_retries = max_retries
         self.tool_email = tool_email
         self.provider_name = self.__class__.__name__.lower()
+        self.max_simultaneous_requests = 5  # max simultaneous requests, used by backend
         self.logger = logging.getLogger("ti.providers." + self.provider_name)
 
     def __repr__(self):
@@ -435,6 +436,9 @@ class Provider(object):
         for url_alias in url_aliases:
             (namespace, url) = url_alias
             metrics = self.get_metrics_for_id(url)
+            logger.debug("metrics returned for {url} are {metrics}".format(
+                url=url, metrics=metrics))
+
             if metric_name in metrics:
                 if (metrics[metric_name] > biggest_so_far):
                     logger.debug("{new_url} has higher metrics than {prev_highest}".format(

@@ -26,12 +26,12 @@ class TestBackend():
         provider_queues = {}
         providers = ProviderFactory.get_providers(self.TEST_PROVIDER_CONFIG)
         for provider in providers:
-            provider_queues[provider.provider_name] = backend.PythonQueue(provider.provider_name+"_queue")
+            provider_queues[provider.provider_name] = backend.RedisQueue(provider.provider_name+"_queue", self.r)
 
         self.b = backend.Backend(
             backend.RedisQueue("alias-unittest", self.r), 
             provider_queues, 
-            [backend.PythonQueue("couch_queue")], 
+            [backend.RedisQueue("couch_queue", self.r)], 
             self.r)
 
         self.fake_item = {
@@ -53,7 +53,7 @@ class TestBackend():
 class TestProviderWorker(TestBackend):
     # warning: calls live provider right now
     def test_add_to_couch_queue_if_nonzero(self):    
-        test_couch_queue = backend.PythonQueue("test_couch_queue")
+        test_couch_queue = backend.RedisQueue("test_couch_queue", self.r)
         provider_worker = backend.ProviderWorker(mocks.ProviderMock("myfakeprovider"), 
                                         None, None, None, {"a": test_couch_queue}, None, self.r)  
         response = provider_worker.add_to_couch_queue_if_nonzero("aaatiid", #start fake tiid with "a" so in first couch queue
@@ -63,16 +63,16 @@ class TestProviderWorker(TestBackend):
 
         # test that it put it on the queue
         in_queue = test_couch_queue.pop()
-        expected = ('aaatiid', {'doi': ['10.5061/dryad.3td2f']}, 'aliases')
+        expected = ['aaatiid', {'doi': ['10.5061/dryad.3td2f']}, 'aliases']
         assert_equals(in_queue, expected)
 
     def test_add_to_couch_queue_if_nonzero_given_metrics(self):    
-        test_couch_queue = backend.PythonQueue("test_couch_queue")
+        test_couch_queue = backend.RedisQueue("test_couch_queue", self.r)
         provider_worker = backend.ProviderWorker(mocks.ProviderMock("myfakeprovider"), 
                                         None, None, None, {"a": test_couch_queue}, None, self.r)  
-        metrics_method_response = {'dryad:package_views': (361, 'http://dx.doi.org/10.5061/dryad.7898'), 
-                    'dryad:total_downloads': (176, 'http://dx.doi.org/10.5061/dryad.7898'), 
-                    'dryad:most_downloaded_file': (65, 'http://dx.doi.org/10.5061/dryad.7898')}        
+        metrics_method_response = {'dryad:package_views': [361, 'http://dx.doi.org/10.5061/dryad.7898'], 
+                    'dryad:total_downloads': [176, 'http://dx.doi.org/10.5061/dryad.7898'], 
+                    'dryad:most_downloaded_file': [65, 'http://dx.doi.org/10.5061/dryad.7898']}        
         response = provider_worker.add_to_couch_queue_if_nonzero("aaatiid", #start fake tiid with "a" so in first couch queue
                 metrics_method_response,
                 "metrics", 
@@ -80,7 +80,7 @@ class TestProviderWorker(TestBackend):
 
         # test that it put it on the queue
         in_queue = test_couch_queue.pop()
-        expected = ('aaatiid', metrics_method_response, "metrics")
+        expected = ['aaatiid', metrics_method_response, "metrics"]
         print in_queue
         assert_equals(in_queue, expected)        
 
@@ -89,7 +89,7 @@ class TestProviderWorker(TestBackend):
         assert_equals(response, None)
 
     def test_add_to_couch_queue_if_nonzero_given_empty_metrics_response(self):    
-        test_couch_queue = backend.PythonQueue("test_couch_queue")
+        test_couch_queue = backend.RedisQueue("test_couch_queue", self.r)
         provider_worker = backend.ProviderWorker(mocks.ProviderMock("myfakeprovider"), 
                                         None, None, None, {"a": test_couch_queue}, None, self.r)  
         metrics_method_response = {}
@@ -159,14 +159,14 @@ class TestCouchWorker(TestBackend):
         assert_equals(response["metrics"]['mendeley:groups']["values"]["raw_history"].keys()[0][0:2], "20")
 
     def test_run_nothing_in_queue(self):
-        test_couch_queue = backend.PythonQueue("test_couch_queue")
+        test_couch_queue = backend.RedisQueue("test_couch_queue", self.r)
         couch_worker = backend.CouchWorker(test_couch_queue, self.r, self.d)
         response = couch_worker.run()
         expected = None
         assert_equals(response, expected)
 
     def test_run_aliases_in_queue(self):
-        test_couch_queue = backend.PythonQueue("test_couch_queue")
+        test_couch_queue = backend.RedisQueue("test_couch_queue", self.r)
         test_couch_queue_dict = {self.fake_item["_id"][0]:test_couch_queue}
         provider_worker = backend.ProviderWorker(mocks.ProviderMock("myfakeprovider"), 
                                         None, None, None, test_couch_queue_dict, None, self.r)  
@@ -195,7 +195,7 @@ class TestCouchWorker(TestBackend):
         assert_equals(couch_response["last_modified"][0:10], now[0:10])
 
     def test_run_metrics_in_queue(self):
-        test_couch_queue = backend.PythonQueue("test_couch_queue")
+        test_couch_queue = backend.RedisQueue("test_couch_queue", self.r)
         test_couch_queue_dict = {self.fake_item["_id"][0]:test_couch_queue}
         provider_worker = backend.ProviderWorker(mocks.ProviderMock("myfakeprovider"), 
                                         None, None, None, test_couch_queue_dict, None, self.r) 

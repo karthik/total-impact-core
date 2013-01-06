@@ -149,6 +149,12 @@ class ProviderWorker(Worker):
         return response
 
     def run(self):
+        num_active_threads_for_this_provider = len(thread_count[self.provider.provider_name])
+
+        if num_active_threads_for_this_provider >= self.provider.max_simultaneous_requests:
+            time.sleep(self.polling_interval) # let the provider catch up
+            return
+
         provider_message = self.provider_queue.pop()
         if provider_message:
             #logger.info("POPPED from queue for {provider}".format(
@@ -166,7 +172,7 @@ class ProviderWorker(Worker):
             thread_count[self.provider.provider_name][tiid+method_name] = 1
 
             logger.info("NUMBER of {provider} threads = {num_provider}, all threads = {num_total}".format(
-                num_provider=len(thread_count[self.provider.provider_name]),
+                num_provider=num_active_threads_for_this_provider,
                 num_total=threading.active_count(),
                 provider=self.provider.provider_name.upper()))
 
@@ -177,6 +183,7 @@ class ProviderWorker(Worker):
 
             # sleep to give the provider a rest :)
             time.sleep(self.polling_interval)
+            return
 
 
 
@@ -336,18 +343,18 @@ class Backend(Worker):
 def main():
     mydao = dao.Dao(os.environ["CLOUDANT_URL"], os.environ["CLOUDANT_DB"])
 
-    myredis = tiredis.from_url(os.getenv("REDISTOGO_URL"))
+    myredis = tiredis.from_url(os.getenv("REDISCLOUD_URL"))
     alias_queue = RedisQueue("aliasqueue", myredis)
     # to clear alias_queue:
     #import redis, os
-    #myredis = redis.from_url(os.getenv("REDISTOGO_URL"))
+    #myredis = redis.from_url(os.getenv("REDISCLOUD_URL"))
     #myredis.delete(["aliasqueue"])
 
 
     # these need to match the tiid alphabet defined in models:
     couch_queues = {}
     for i in "abcdefghijklmnopqrstuvwxyz1234567890":
-        couch_queues[i] = PythonQueue(i+"_couch_queue")
+        couch_queues[i] = RedisQueue(i+"_couch_queue", myredis)
         couch_worker = CouchWorker(couch_queues[i], myredis, mydao)
         couch_worker.spawn_and_loop() 
         logger.info("launched backend couch worker with {i}_couch_queue".format(
@@ -358,7 +365,7 @@ def main():
     provider_queues = {}
     providers = ProviderFactory.get_providers(default_settings.PROVIDERS)
     for provider in providers:
-        provider_queues[provider.provider_name] = PythonQueue(provider.provider_name+"_queue")
+        provider_queues[provider.provider_name] = RedisQueue(provider.provider_name+"_queue", myredis)
         provider_worker = ProviderWorker(
             provider, 
             polling_interval, 
