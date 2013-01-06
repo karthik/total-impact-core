@@ -153,7 +153,7 @@ class ProviderWorker(Worker):
 
         if num_active_threads_for_this_provider >= self.provider.max_simultaneous_requests:
             logger.info("not spawning another thread for {provider} yet because it already has {num_provider} active threads".format(
-                num_provider=num_active_threads_for_this_provider, provider=provider))
+                num_provider=num_active_threads_for_this_provider, provider=self.provider.provider_name.upper()))
             time.sleep(self.polling_interval) # let the provider catch up
             return
 
